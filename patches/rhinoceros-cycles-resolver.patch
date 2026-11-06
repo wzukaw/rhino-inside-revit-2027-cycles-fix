@@ -1,0 +1,72 @@
+diff --git a/src/RhinoInside.Revit/Rhinoceros.cs b/src/RhinoInside.Revit/Rhinoceros.cs
+index 653700eef..355166978 100755
+--- a/src/RhinoInside.Revit/Rhinoceros.cs
++++ b/src/RhinoInside.Revit/Rhinoceros.cs
+@@ -3,6 +3,7 @@ using System.Collections.Generic;
+ using System.Diagnostics;
+ using System.Linq;
+ using System.Reflection;
++using System.Runtime.InteropServices;
+ using System.Text;
+ using Microsoft.Win32.SafeHandles;
+ using Rhino;
+@@ -35,6 +36,51 @@ namespace RhinoInside.Revit
+     internal static readonly string SchemeName = $"Inside-Revit-{Core.Host.Services.VersionNumber}";
+     internal static string[] StartupLog;
+ 
++#if NET
++    static string IsolatedCyclesPath;
++
++    static void ConfigureCyclesNativeResolver(Assembly assembly)
++    {
++      if (!assembly.GetName().Name.Equals("csycles", StringComparison.OrdinalIgnoreCase))
++        return;
++
++      try
++      {
++        NativeLibrary.SetDllImportResolver(assembly, (libraryName, requestingAssembly, searchPath) =>
++        {
++          if (libraryName.Equals("ccycles", StringComparison.OrdinalIgnoreCase))
++            return NativeLibrary.Load(IsolatedCyclesPath);
++
++          return IntPtr.Zero;
++        });
++      }
++      catch (InvalidOperationException)
++      {
++        // A resolver was already registered for this csycles assembly.
++      }
++    }
++
++    static void ConfigureCyclesNativeResolver()
++    {
++      try
++      {
++        var assemblyDirectory = System.IO.Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
++        var isolatedCycles = System.IO.Path.Combine(assemblyDirectory, "CyclesIsolated", "ccycles_rir.dll");
++        if (!System.IO.File.Exists(isolatedCycles))
++          return;
++
++        IsolatedCyclesPath = isolatedCycles;
++        AppDomain.CurrentDomain.AssemblyLoad += (sender, args) => ConfigureCyclesNativeResolver(args.LoadedAssembly);
++        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
++          ConfigureCyclesNativeResolver(assembly);
++      }
++      catch (Exception e)
++      {
++        Debug.WriteLine($"Unable to configure the isolated RhinoCycles resolver: {e}");
++      }
++    }
++#endif
++
+     internal static bool InitEto(Assembly assembly)
+     {
+       if (Eto.Forms.Application.Instance is null)
+@@ -91,6 +137,7 @@ namespace RhinoInside.Revit
+         }
+ 
+ #if NET
++        ConfigureCyclesNativeResolver();
+         args.Add("/netcore");
+ #else
+         args.Add("/netfx");
